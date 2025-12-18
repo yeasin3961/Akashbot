@@ -22,14 +22,15 @@ const Post = mongoose.model('Post', new mongoose.Schema({
     creatorId: Number,
     title: String,
     image: String,
+    language: String,
     links: Array,
-    channels: Array, // এই ইউজারের সেভ করা চ্যানেলগুলো এখানে ঢুকবে
+    channels: Array,
     createdAt: { type: Date, default: Date.now }
 }));
 
 const UserProfile = mongoose.model('UserProfile', new mongoose.Schema({
     userId: Number,
-    savedChannels: { type: Array, default: [] } // ইউজার এখানে তার চ্যানেল সেভ রাখবে
+    savedChannels: { type: Array, default: [] } 
 }));
 
 const Setting = mongoose.model('Setting', new mongoose.Schema({
@@ -75,11 +76,10 @@ function generateHTML(post, zoneId, clicks) {
     .ch-link{display:inline-block;background:#3b82f6;color:white;text-decoration:none;padding:6px 12px;margin:4px;border-radius:6px;font-size:13px;}
     .btn{background:#2563eb;color:white;padding:14px;width:100%;border-radius:10px;margin:10px 0;border:none;font-weight:bold;cursor:pointer;}
     .q-btn{background:#334155;border:1px solid #475569;}#st{color:#fbbf24;margin-bottom:10px;}</style></head>
-    <body><div class="card"><img src="${post.image}"><h2>${post.title}</h2>${chSection}<div id="st">অ্যাড দেখা হয়েছে: 0/${clicks}</div>${qBtns}</div>
+    <body><div class="card"><img src="${post.image}"><h2>${post.title}</h2><p>Language: ${post.language}</p>${chSection}<div id="st">অ্যাড দেখা হয়েছে: 0/${clicks}</div>${qBtns}</div>
     <script>let c=0;function startAd(u){if(c<${clicks}){if(typeof window['show_'+'${zoneId}'] === 'function'){window['show_'+'${zoneId}']().then(()=>{c++;document.getElementById('st').innerText="অ্যাড দেখা হয়েছে: "+c+"/${clicks}";});}else{c++;}}else{location.href=u;}}</script></body></html>`;
 }
 
-// --- Website Route ---
 app.get('/post/:id', async (req, res) => {
     const post = await Post.findOne({ id: req.params.id });
     if (!post) return res.send("পোস্টটি পাওয়া যায়নি!");
@@ -89,47 +89,65 @@ app.get('/post/:id', async (req, res) => {
 });
 
 // --- Bot Logic ---
-bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "🎬 **মুভি পোস্ট মেকার**\n\nসব ফিচারের জন্য /settings কমান্ডটি ব্যবহার করুন।"));
+bot.onText(/\/start/, (msg) => bot.sendMessage(msg.chat.id, "🎬 মুভি পোস্ট মেকার বোট!\nসব কন্ট্রোল /settings কমান্ডে পাবেন।"));
 
 bot.onText(/\/settings/, async (msg) => {
     const chatId = msg.chat.id;
     const premium = await isPremium(chatId);
-    
-    let buttons = [[{ text: "🎬 নতুন মুভি পোস্ট", callback_data: "start_post" }]];
+    let buttons = [[{ text: "🎬 নতুন মুভি পোস্ট তৈরি", callback_data: "start_post" }]];
     
     if (premium) {
-        buttons.push([{ text: "📢 আমার চ্যানেল সেটআপ", callback_data: "setup_channels" }]);
+        buttons.push([{ text: "📢 চ্যানেল বাটন সেটআপ", callback_data: "setup_channels_menu" }]);
     }
     
     buttons.push([{ text: "💎 প্রিমিয়াম প্ল্যান", callback_data: "view_premium" }]);
-
+    
     if (chatId === ADMIN_ID) {
-        buttons.push([{ text: "⚙️ বিজ্ঞাপন সেটিংস", callback_data: "ad_settings" }], [{ text: "➕ প্রিমিয়াম মেম্বার অ্যাড", callback_data: "add_user" }]);
+        buttons.push([{ text: "⚙️ অ্যাড সেটিংস", callback_data: "ad_settings" }], [{ text: "➕ প্রিমিয়াম মেম্বার অ্যাড", callback_data: "add_user" }]);
     }
-    bot.sendMessage(chatId, "🛠 **বোট মেইন মেনু**", { reply_markup: { inline_keyboard: buttons } });
+    bot.sendMessage(chatId, "🛠 বোট মেইন মেনু", { reply_markup: { inline_keyboard: buttons } });
 });
 
 bot.on('callback_query', async (q) => {
     const chatId = q.message.chat.id;
     const data = q.data;
 
-    if (data === "start_post") {
+    // --- চ্যানেল সেটআপ মেনু ---
+    if (data === "setup_channels_menu") {
+        const profile = await UserProfile.findOne({ userId: chatId });
+        let msgText = "📢 **আপনার সেভ করা চ্যানেলসমূহ:**\n\n";
+        if (!profile || profile.savedChannels.length === 0) msgText += "বর্তমানে কোনো চ্যানেল সেট করা নেই।";
+        else profile.savedChannels.forEach((ch, i) => msgText += `${i+1}. ${ch.name}\n`);
+
+        bot.sendMessage(chatId, msgText, {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "➕ নতুন চ্যানেল যোগ করুন", callback_data: "add_new_ch" }],
+                    [{ text: "🗑 সব ক্লিয়ার করুন", callback_data: "clear_channels" }]
+                ]
+            }
+        });
+    }
+    else if (data === "add_new_ch") {
+        userState[chatId] = { step: 'get_ch_name' };
+        bot.sendMessage(chatId, "📢 চ্যানেলের নাম দিন:");
+    }
+    else if (data === "clear_channels") {
+        await UserProfile.findOneAndUpdate({ userId: chatId }, { savedChannels: [] });
+        bot.sendMessage(chatId, "✅ আপনার সব চ্যানেল বাটন রিমুভ করা হয়েছে।");
+    }
+
+    // --- মুভি পোস্ট মেনু ---
+    else if (data === "start_post") {
         if (!(await isPremium(chatId))) return bot.sendMessage(chatId, "❌ আপনি প্রিমিয়াম মেম্বার নন।");
         userState[chatId] = { step: 'title', links: [] };
-        bot.sendMessage(chatId, "🎬 মুভির নাম (Title) লিখুন:");
+        bot.sendMessage(chatId, "🎬 ১. মুভির নাম (Title) লিখুন:");
     }
-    else if (data === "setup_channels") {
-        userState[chatId] = { step: 'setup_ch_name', tempChans: [] };
-        bot.sendMessage(chatId, "📢 আপনার চ্যানেলের নাম দিন (এটি আপনার প্রতিটি পোস্টে অটো যোগ হবে):");
-    }
-    else if (data === "add_more_ch") {
-        userState[chatId].step = 'setup_ch_name';
-        bot.sendMessage(chatId, "📢 পরবর্তী চ্যানেলের নাম দিন:");
-    }
-    else if (data === "save_ch_final") {
-        await UserProfile.findOneAndUpdate({ userId: chatId }, { savedChannels: userState[chatId].tempChans }, { upsert: true });
-        bot.sendMessage(chatId, "✅ আপনার চ্যানেল লিস্ট সফলভাবে সেভ হয়েছে!");
-        delete userState[chatId];
+    else if (data === "skip_q") {
+        if (userState[chatId].links.length === 0) return bot.sendMessage(chatId, "⚠️ অন্তত একটি লিঙ্ক দিতে হবে!");
+        bot.sendMessage(chatId, "সব তথ্য ঠিক থাকলে কনফার্ম করুন:", {
+            reply_markup: { inline_keyboard: [[{ text: "✅ কনফার্ম পোস্ট", callback_data: "confirm" }]] }
+        });
     }
     else if (data === "confirm" && userState[chatId]) {
         const s = userState[chatId];
@@ -137,18 +155,19 @@ bot.on('callback_query', async (q) => {
         const userChannels = profile ? profile.savedChannels : [];
         
         const id = Math.random().toString(36).substring(7);
-        await new Post({ id, creatorId: chatId, title: s.title, image: s.image, links: s.links, channels: userChannels }).save();
+        await new Post({ 
+            id, creatorId: chatId, title: s.title, image: s.image, 
+            language: s.language, links: s.links, channels: userChannels 
+        }).save();
 
         const zoneId = await getSet('zone_id', '10341337');
         const clicks = await getSet('required_clicks', 3);
         const finalHtml = generateHTML({...s, channels: userChannels}, zoneId, clicks);
 
-        await bot.sendMessage(chatId, `✅ **সফল!**\n🔗 ${myAppUrl}/post/${id}`);
-        await bot.sendMessage(chatId, `📄 **HTML কোড:**\n\n\`\`\`html\n${finalHtml}\n\`\`\``, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `✅ সফল!\n🔗 ${myAppUrl}/post/${id}`);
+        await bot.sendMessage(chatId, `📄 HTML Code:\n\n\`\`\`html\n${finalHtml}\n\`\`\``, { parse_mode: 'Markdown' });
         delete userState[chatId];
     }
-    else if (data === "ad_settings" && chatId === ADMIN_ID) bot.sendMessage(chatId, "`/setzone ID` বা `/setclicks সংখ্যা` দিন।");
-    else if (data === "add_user" && chatId === ADMIN_ID) bot.sendMessage(chatId, "`/addpremium ID | Days | Package` দিন।");
 });
 
 // --- Message Handler ---
@@ -159,40 +178,40 @@ bot.on('message', async (msg) => {
     
     let s = userState[chatId];
 
-    // চ্যানেল সেটআপ লজিক (আলাদা)
-    if (s.step === 'setup_ch_name') {
-        s.lastChName = text; s.step = 'setup_ch_link';
+    // চ্যানেল সেভ লজিক
+    if (s.step === 'get_ch_name') {
+        s.tempName = text; s.step = 'get_ch_link';
         bot.sendMessage(chatId, `🔗 '${text}' চ্যানেলের লিঙ্ক দিন:`);
-    }
-    else if (s.step === 'setup_ch_link') {
-        s.tempChans.push({ name: s.lastChName, link: text });
-        bot.sendMessage(chatId, "চ্যানেল যুক্ত হয়েছে। আরও যোগ করবেন?", {
-            reply_markup: {
-                inline_keyboard: [[{ text: "➕ আরও অ্যাড", callback_data: "add_more_ch" }, { text: "✅ সেভ করুন", callback_data: "save_ch_final" }]]
-            }
-        });
+    } else if (s.step === 'get_ch_link') {
+        await UserProfile.findOneAndUpdate(
+            { userId: chatId }, 
+            { $push: { savedChannels: { name: s.tempName, link: text } } }, 
+            { upsert: true }
+        );
+        bot.sendMessage(chatId, "✅ চ্যানেল সেভ হয়েছে। এটি এখন প্রতি মুভি পোস্টে অটোমেটিক যুক্ত হবে।");
+        delete userState[chatId];
     }
     // মুভি পোস্ট লজিক
     else if (s.step === 'title') {
         s.title = text; s.step = 'image';
-        bot.sendMessage(chatId, "🖼 মুভি পোস্টার ইমেজ লিঙ্ক দিন:");
-    } 
-    else if (s.step === 'image') {
-        s.image = text; s.step = 'q_name';
-        bot.sendMessage(chatId, "📊 মুভি কোয়ালিটির নাম দিন (উদা: 720p):");
-    } 
-    else if (s.step === 'q_name') {
+        bot.sendMessage(chatId, "🖼 ২. মুভির পোস্টার লিঙ্ক দিন:");
+    } else if (s.step === 'image') {
+        s.image = text; s.step = 'lang';
+        bot.sendMessage(chatId, "🌐 ৩. মুভির ভাষা (Language) লিখুন:");
+    } else if (s.step === 'lang') {
+        s.language = text; s.step = 'q_name';
+        bot.sendMessage(chatId, "📊 ৪. কোয়ালিটির নাম দিন (উদা: 720p) অথবা শেষ করতে 'skip' লিখুন:");
+    } else if (s.step === 'q_name') {
+        if (text.toLowerCase() === 'skip') return bot.sendMessage(chatId, "নিচে কনফার্ম করুন:", { reply_markup: { inline_keyboard: [[{ text: "✅ পোস্ট সম্পন্ন করুন", callback_data: "confirm" }]] } });
         s.tempQ = text; s.step = 'q_link';
-        bot.sendMessage(chatId, `🔗 '${text}' কোয়ালিটির লিঙ্ক দিন:`);
-    } 
-    else if (s.step === 'q_link') {
+        bot.sendMessage(chatId, `🔗 '${text}' এর ভিডিও লিঙ্ক দিন:`);
+    } else if (s.step === 'q_link') {
+        if (text.toLowerCase() === 'skip') return bot.sendMessage(chatId, "⚠️ লিঙ্ক দেওয়া বাধ্যতামূলক!");
         s.links.push({ quality: s.tempQ, link: text });
-        bot.sendMessage(chatId, "✅ কোয়ালিটি সেভ হয়েছে।", {
-            reply_markup: {
-                inline_keyboard: [[{ text: "➕ আরও কোয়ালিটি", callback_data: "confirm_next_q" }, { text: "🏁 পোস্ট সম্পন্ন করুন", callback_data: "confirm" }]]
-            }
+        s.step = 'q_name';
+        bot.sendMessage(chatId, "✅ যুক্ত হয়েছে। পরবর্তী কোয়ালিটি দিন অথবা শেষ করতে 'skip' লিখুন:", {
+            reply_markup: { inline_keyboard: [[{ text: "⏩ আর নেই (Skip)", callback_data: "skip_q" }]] }
         });
-        s.step = 'q_name'; // পরবর্তী কোয়ালিটির জন্য রেডি
     }
 });
 
@@ -203,7 +222,7 @@ bot.onText(/\/addpremium (.+)\|(.+)\|(.+)/, async (msg, match) => {
     const days = parseInt(match[2].trim());
     const expiry = moment().add(days, 'days').tz("Asia/Dhaka");
     await PremiumUser.findOneAndUpdate({ userId: targetId }, { packageName: match[3].trim(), expiryDate: expiry.toDate() }, { upsert: true });
-    bot.sendMessage(targetId, `🎉 প্রিমিয়াম চালু! মেয়াদ: ${expiry.format('DD-MM-YYYY hh:mm A')}`);
+    bot.sendMessage(targetId, `🎉 অভিনন্দন! প্রিমিয়াম চালু হয়েছে। মেয়াদ: ${expiry.format('DD-MM-YYYY hh:mm A')}`);
     bot.sendMessage(ADMIN_ID, "✅ ডান।");
 });
 
